@@ -1,34 +1,153 @@
-// 说明：pageCheck 负责在 App Store Connect 的分发页面上定位指定平台下的版本列表，
+// =====================================================================
+// MagicScript — robust App Store Connect selectors (issue #1)
+// ---------------------------------------------------------------------
+// App Store Connect is built with styled-components: most of its CSS
+// classes (e.g. "cMUEAH", "eeVlrs") are content hashes that Apple
+// regenerates on every front-end build. Hardcoding them breaks the
+// extension whenever Apple ships an update. The helpers below rely only
+// on STABLE attributes: role, aria-*, data-*, name.
+// =====================================================================
+
+// Collapse whitespace (incl. non-breaking spaces) so names compare reliably.
+function msNormalize(text) {
+  return (text || "").replace(/\s+/g, " ").trim();
+}
+
+// Visible language name of a menu item, normalized.
+function msLangName(item) {
+  return msNormalize(item && item.textContent);
+}
+
+// Localized labels of App Store Connect's "Save" button, lowercase.
+// Add your UI language here if the Save button is not detected.
+const MS_SAVE_LABELS = [
+  "save", // English
+  "enregistrer", // French
+  "sichern", // German
+  "guardar", // Spanish / Portuguese
+  "salva", // Italian
+  "salvar", // Portuguese (Brazil)
+  "bewaren", // Dutch
+  "spara", // Swedish
+  "gem", // Danish
+  "lagre", // Norwegian
+  "tallenna", // Finnish
+  "zapisz", // Polish
+  "uložit", // Czech
+  "保存", // Japanese / Chinese (Simplified)
+  "儲存", // Chinese (Traditional)
+  "저장", // Korean
+  "сохранить", // Russian
+];
+
+// "Save" button in the version page header.
+//
+// App Store Connect gives this button no stable id/aria/data attribute, and
+// the page header is restructured when there are unsaved changes — so no
+// structural anchor is reliable. The button's accessible text, however, is
+// the localized word for "Save", and it is the only such button on the
+// page. We match that, restricted to type="button" (which the Save button
+// uses and the neighbouring "Add for review" button does not).
+function msGetSaveButton() {
+  const typeButtons = [...document.querySelectorAll('button[type="button"]')];
+  // Primary: match the localized "Save" label.
+  const byLabel = typeButtons.find((button) =>
+    MS_SAVE_LABELS.includes(msNormalize(button.textContent).toLowerCase()),
+  );
+  if (byLabel) return byLabel;
+  // Fallback for UI languages missing from the list above: on a "clean"
+  // page the Save button is the only disabled type="button".
+  const disabled = typeButtons.filter((button) => button.disabled);
+  if (disabled.length === 1) return disabled[0];
+  return null;
+}
+
+// Button that opens the language dropdown.
+function msGetLanguageButton() {
+  return document.querySelector(
+    'button[aria-haspopup="menu"][aria-controls^="popover-content-"]',
+  );
+}
+
+// Open the language menu if it is not already open. Returns false if the
+// language button cannot be found.
+function msEnsureLanguageMenuOpen() {
+  const button = msGetLanguageButton();
+  if (!button) return false;
+  if (button.getAttribute("aria-expanded") !== "true") button.click();
+  return true;
+}
+
+// Open language menu container (the button points to it via aria-controls).
+function msGetLanguageMenu() {
+  const button = msGetLanguageButton();
+  const menuId = button && button.getAttribute("aria-controls");
+  return menuId ? document.getElementById(menuId) : null;
+}
+
+// Menu items for the app's EXISTING localizations.
+// The dropdown mixes existing localizations with "add a language" entries;
+// we exclude the latter so the extension never creates empty localizations.
+function msGetLocaleItems() {
+  const menu = msGetLanguageMenu();
+  if (!menu) return [];
+  return [...menu.querySelectorAll('[role="menuitem"]')].filter((item) => {
+    const row = item.parentElement;
+    // An existing localization has a "remove" button (data-id is stable).
+    if (row && row.querySelector('[data-id^="removeLocale_"]')) return true;
+    // The primary language has no remove button: its aria-label STARTS with
+    // the language name ("English…, selected, Primary"). An "add" entry has
+    // an aria-label like "Add X" where the name is at the end.
+    const ariaLabel = msNormalize(item.getAttribute("aria-label"));
+    if (!ariaLabel) return true; // existing localization with no special label
+    return ariaLabel.startsWith(msLangName(item));
+  });
+}
+
+// Set the value of a React-controlled <textarea>/<input> so App Store
+// Connect registers it as a real edit. Assigning .value directly is ignored
+// by React: it overrides the instance "value" property and keeps its own
+// value tracker. Calling the NATIVE prototype setter bypasses that override,
+// and a bubbling "input" event then makes React's tracker fire onChange.
+function msSetFieldValue(field, value) {
+  const prototype =
+    field.tagName === "TEXTAREA"
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+  const nativeSetter = Object.getOwnPropertyDescriptor(prototype, "value").set;
+  field.focus();
+  nativeSetter.call(field, value == null ? "" : value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  field.blur();
+}
+
+// pageCheck 负责在 App Store Connect 的分发页面上定位指定平台下的版本列表，
 // 并根据 directToInflight 参数决定是跳转到 inflight 还是 deliverable。
 function pageCheck(end, directToInflight = false) {
   // App Store Connect 左侧平台列表容器（iOS / macOS / tvOS 等）
   const platforms = document.querySelector('[class="Box-sc-18eybku-0 bHeRUM"]');
   let ul;
 
-  console.log("[MagicScript][pageCheck] target platform:", end);
-
   const url = window.location.toString();
 
-  console.log("[MagicScript][pageCheck] current url:", url);
   // 如果不在 distribution 页面，则提醒用户先切到正确页面
   if (!platforms || url.indexOf("distribution") === -1) {
     window.alert(
-      "Go the page in App Store Connect where you can edit your app's description first. \n\nThe URL will be like https://appstoreconnect.apple.com/apps/yourAppid/distribution/ios/version/inflight"
+      "Go the page in App Store Connect where you can edit your app's description first. \n\nThe URL will be like https://appstoreconnect.apple.com/apps/yourAppid/distribution/ios/version/inflight",
     );
     return { success: false, ul: ul };
   }
 
   let seletedPlatformExist = false;
   for (let platform of platforms.children) {
-    console.log("[MagicScript][pageCheck] platform node:", platform);
     if (
       platform.firstChild &&
       platform.firstChild.firstChild &&
       platform.firstChild.firstChild.textContent.indexOf(end.toString()) > -1
     ) {
-      // 说明：platform.children[1] 是当前平台下「版本列表」的容器，后续会在这里找 inflight / deliverable
+      // platform.children[1] 是当前平台下「版本列表」的容器
       ul = platform.children[1];
-      console.log("[MagicScript][pageCheck] matched platform ul:", ul);
       seletedPlatformExist = true;
       break;
     }
@@ -44,7 +163,11 @@ function pageCheck(end, directToInflight = false) {
   let target = ul;
   // 未发布的 1.0 版本 DOM 结构与正常版本略不同，这里做一次兼容处理
   if (ul.children.length === 1) {
-    if (ul.firstChild && ul.firstChild.firstChild && ul.firstChild.firstChild.tagName === "DIV") {
+    if (
+      ul.firstChild &&
+      ul.firstChild.firstChild &&
+      ul.firstChild.firstChild.tagName === "DIV"
+    ) {
       target = ul.firstChild;
     }
   }
@@ -55,13 +178,11 @@ function pageCheck(end, directToInflight = false) {
       child.firstChild.getAttribute("href") &&
       child.firstChild.getAttribute("href").indexOf("inflight") > -1
     ) {
-      console.log("[MagicScript][pageCheck] has inflight version");
       hasInflight = true;
     }
   }
 
   if (!hasInflight) {
-    console.log("[MagicScript][pageCheck] no inflight version found");
     window.alert("Create a new version first");
     return { success: false, ul: ul };
   }
@@ -74,7 +195,6 @@ function pageCheck(end, directToInflight = false) {
         child.firstChild.getAttribute("href") &&
         child.firstChild.getAttribute("href").indexOf("inflight") > -1
       ) {
-        console.log("[MagicScript][pageCheck] navigate to inflight");
         child.firstChild.click();
         return { success: true, ul: ul };
       }
@@ -86,234 +206,195 @@ function pageCheck(end, directToInflight = false) {
         child.firstChild.getAttribute("href") &&
         child.firstChild.getAttribute("href").indexOf("deliverable") > -1
       ) {
-        console.log("[MagicScript][pageCheck] navigate to deliverable");
         child.firstChild.click();
         return { success: true, ul: ul };
       }
     }
   }
 
-  // 理论上不会走到这里，但为了安全起见仍然返回失败
-  console.log("[MagicScript][pageCheck] no matched inflight/deliverable link");
   return { success: false, ul: ul };
 }
-  function getMenu(copyContents){
-    // 为了便于调试 App Store Connect 语言菜单 DOM 变化，这里增加详细日志和空值检查
-    // 这里显式限制为 button，避免页面上其他拥有同样 class 的元素被误选
-    const languageMenuSelector = 'button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]'
-    const menuListSelector = '[class="Box-sc-18eybku-0 MenuList__Outer-sc-rmfrs7-0 djfvjw fpVofh"]'
-    const menuItemSelector = '[class="Box-sc-18eybku-0 cMUEAH"]'
 
-    console.log("[MagicScript][getMenu] start getMenu")
-
-    // 点击语言下拉按钮
-    const languageMenuButton = document.querySelector(languageMenuSelector)
-    if (!languageMenuButton){
-      console.log("[MagicScript][getMenu] language menu button not found, selector:", languageMenuSelector)
-      return []
-    }
-    languageMenuButton.click()
-    console.log("[MagicScript][getMenu] language menu button clicked")
-
-    // 获取语言列表容器
-    const ul = document.querySelector(menuListSelector)
-    if (!ul){
-      console.log("[MagicScript][getMenu] language menu list not found, selector:", menuListSelector)
-      return []
-    }
-    console.log("[MagicScript][getMenu] language list element:", ul)
-    console.log("[MagicScript][getMenu] language list children count:", ul.children ? ul.children.length : 0)
-
-    // 将 menu 下的所有语言存储到词典中，并打详细日志
-    for (let child of ul.children){
-      const item = child.querySelector(menuItemSelector)
-      if (!item || !item.firstChild){
-        console.log("[MagicScript][getMenu] skip invalid menu item:", child)
-        continue
-      }
-      console.log("[MagicScript][getMenu] raw menu item node:", item.firstChild)
-      let language = item.firstChild.textContent
-      console.log("[MagicScript][getMenu] detected language:", language)
-      copyContents[language] = ""
-    }
-
-    const menuItems = document.querySelectorAll(menuItemSelector)
-    console.log("[MagicScript][getMenu] final menuItems length:", menuItems.length)
-    return menuItems
-  }
-  function copyAndPaste(position, ul){
-    var copyContents = {}
-    let menuItems = getMenu(copyContents)
-    //遍历并且切换语言，将语言下的whatnew内容保存到词典中
-    for (let language in copyContents){
-      // 这里同样限制为 button，避免误点非按钮元素
-      document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-      for (item of menuItems) {
-        console.log(item)
-        if (item.firstChild.textContent == language){
-         item.click()
-         copyContents[language] = copyWhatsnew(position)
-        }    
-      }
-    }
-    //切换到准备发布的tab(准备发布和已发布的class id 都是Box-sc-18eybku-0 eEFQij，逻辑是切换到第一个匹配元素，即准备发布)
-    ul.firstChild.firstChild.click()
-    //使用迭代的方式实现所有语言的粘贴
-    setTimeout(() => {
-      //点击语言menu
-      document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-      let menuItems = document.querySelectorAll('[class="Box-sc-18eybku-0 cMUEAH"]')
-      //使用迭代的方式实现所有语言的粘贴
-      pasteWhatsnew(0, menuItems, position, copyContents)
-    }, 3000);
-  }
-  async function copyAndPastePrimary(position, ul, isTranslation = false){
-    var copyContents = {}
-    let menuItems = getMenu(copyContents)
-    //复制主语言
-    // 主语言复制时也限定点击 button，防止 DOM 结构变更导致选错元素
-    document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-    menuItems[0].click()
-    console.log("menuitem", menuItems[0])
-    let primaryContent = copyWhatsnew(position)
-    let translateResult
-    if (isTranslation){
-      let languageList = []
-      for (let language in copyContents){
-        languageList.push(language)
-      }
-      let textContent = await fetchTextContent()
-      console.log("textContent", textContent)
-      translateResult = await translate(textContent, languageList)
-    }
-    //遍历并且切换语言，将primary语言下的whatnew内容复制并保存
-    console.log("copyContents", copyContents)
-    console.log("menuItems", menuItems)
-    for (let language in copyContents){
-      // 每次切换语言前，统一通过 button 选择语言菜单
-      document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-      for (item of menuItems) {
-        console.log(item)
-        if (item.firstChild.textContent == language){
-         item.click()
-         console.log("translate Result", language)
-         if (isTranslation){
-          copyContents[language] = translateResult[language]
-         }else{
-          copyContents[language] = primaryContent
-         }
-        }    
-      }
-    }
-    //切换到准备发布的tab
-    ul.firstChild.firstChild.click()
-    //使用迭代的方式实现所有语言的粘贴
-    setTimeout(() => {
-      //点击语言menu
-      document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-      let menuItems = document.querySelectorAll('[class="Box-sc-18eybku-0 cMUEAH"]')
-      //使用迭代的方式实现所有语言的粘贴
-      if (menuItems.length > 1){
-        pasteWhatsnew(0, menuItems, position, copyContents)
-      }
-    }, 3000);
-  }
-  function copyWhatsnew(position) {
-    if (document.querySelector('[name="'+position+'"]').querySelector("div") != null){
-      const element = document.querySelector('[name="'+position+'"]');
-      // 获取所有文本内容，包括换行
-      return Array.from(element.childNodes)
-        .map(node => {
-          if (node.innerHTML === '<br>') return '';
-          // 否则返回文本内容
-          return node.innerText;
-        })
-        .join('\n')
-        .trim();
-    }else{
-      return ""
-    }
-  }
-  function copyInput(position) {
-    console.log("print1")
-    console.log(document.querySelector('[name="'+position+'"]'))
-    console.log("print 2")
-    console.log(document.querySelector('[name="'+position+'"]').value)
-    return document.querySelector('[name="'+position+'"]').value
-  }
-  
-  function pasteWhatsnew(index, items, position, copyContents){
-    console.log(`items ${items}`)
-    console.log(`items[index] ${items[index]}`)
-    let menuItems = document.querySelectorAll('[class="Box-sc-18eybku-0 cMUEAH"]')
-    console.log(`menuItems ${menuItems}`)
-    //切换语言，不能直接点击items[index]，必须点击新获取的menuItems中的元素，所以需要循环
-    for (ite of menuItems) {
-      console.log("ite.innerText vs items[index].innerText")
-      console.log(ite.innerText)
-      console.log(items[index].innerText)
-      if (ite.innerText == items[index].innerText){
-        console.log("try to click2")
-        console.log(ite)
-        console.log(items[index])
-        ite.click()
-      }    
-    }
-    //粘贴文本
-    console.log("position")
-    console.log(position)
-    const editor = document.querySelector('[name="'+position+'"]');
-    editor.oninput = (e) => console.log('Input');
-    setTimeout(() => {
-      clearEditor(editor)
-      console.log(`match ${items[index].innerText}`)
-      let language2 = items[index].firstChild.textContent
-      document.execCommand('insertText', false, copyContents[language2]);
-    }, 1000);
-    //点击保存
-    setTimeout(() => {
-      //save
-      document.querySelector('[id="heading-buttons"]').firstChild.click()
-    }, 2000);
-    //打开菜单，迭代函数
-    setTimeout(() => {
-      if (index < items.length - 1){
-        //open menu
-        document.querySelector('button[class="Box-sc-18eybku-0 Link-sc-1tc8rtf-0 jijsjF iKZzlZ"]').click()
-        pasteWhatsnew(index+1, items, position, copyContents)
-      }
-    }, 5000)
+// Open the language menu and record every existing localization as a key
+// of copyContents. Returns the localization menu items.
+function getMenu(copyContents) {
+  if (!msEnsureLanguageMenuOpen()) {
+    console.warn("[MagicScript] language button not found");
+    return [];
   }
 
-function clearEditor(editor){
-  editor.focus();
-  // 选中整个编辑器的内容
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
+  const items = msGetLocaleItems();
+  if (items.length === 0) {
+    console.warn("[MagicScript] no localizations found in the language menu");
+    return [];
+  }
+
+  for (const item of items) {
+    copyContents[msLangName(item)] = "";
+  }
+  return items;
 }
 
+function copyAndPaste(position, ul) {
+  var copyContents = {};
+  getMenu(copyContents);
+  // 遍历并切换语言，将每种语言下的内容保存到词典中
+  for (let language in copyContents) {
+    msEnsureLanguageMenuOpen();
+    for (let item of msGetLocaleItems()) {
+      if (msLangName(item) == language) {
+        item.click();
+        copyContents[language] = copyWhatsnew(position);
+      }
+    }
+  }
+  // 切换到准备发布的 tab
+  ul.firstChild.firstChild.click();
+  // 使用迭代的方式实现所有语言的粘贴
+  setTimeout(() => {
+    if (Object.keys(copyContents).length > 0) {
+      pasteWhatsnew(0, Object.keys(copyContents), position, copyContents);
+    }
+  }, 3000);
+}
 
+async function copyAndPastePrimary(position, ul, isTranslation = false) {
+  var copyContents = {};
+  getMenu(copyContents);
+
+  // 复制主语言（菜单的第一个 item）
+  msEnsureLanguageMenuOpen();
+  const primaryItems = msGetLocaleItems();
+  if (primaryItems.length === 0) {
+    console.warn("[MagicScript] no localizations found");
+    return;
+  }
+  primaryItems[0].click();
+  let primaryContent = copyWhatsnew(position);
+
+  let translateResult;
+  if (isTranslation) {
+    let languageList = Object.keys(copyContents);
+    let textContent = await fetchTextContent();
+    translateResult = await translate(textContent, languageList);
+  }
+
+  // 遍历并切换语言，将主语言内容（或翻译结果）保存到词典中
+  for (let language in copyContents) {
+    msEnsureLanguageMenuOpen();
+    for (let item of msGetLocaleItems()) {
+      if (msLangName(item) == language) {
+        item.click();
+        copyContents[language] = isTranslation
+          ? translateResult[language]
+          : primaryContent;
+      }
+    }
+  }
+
+  // 切换到准备发布的 tab
+  ul.firstChild.firstChild.click();
+  // 使用迭代的方式实现所有语言的粘贴
+  setTimeout(() => {
+    if (Object.keys(copyContents).length > 1) {
+      pasteWhatsnew(0, Object.keys(copyContents), position, copyContents);
+    }
+  }, 3000);
+}
+
+function copyWhatsnew(position) {
+  const element = document.querySelector('[name="' + position + '"]');
+  if (!element) {
+    console.warn("[MagicScript] field not found:", position);
+    return "";
+  }
+  // App Store Connect's metadata fields are <textarea>/<input> — read .value.
+  if (element.tagName === "TEXTAREA" || element.tagName === "INPUT") {
+    return element.value;
+  }
+  // Fallback for a contenteditable rich editor.
+  if (element.querySelector("div") != null) {
+    return Array.from(element.childNodes)
+      .map((node) => (node.innerHTML === "<br>" ? "" : node.innerText))
+      .join("\n")
+      .trim();
+  }
+  return element.textContent || "";
+}
+
+function copyInput(position) {
+  const input = document.querySelector('[name="' + position + '"]');
+  if (!input) {
+    console.warn("[MagicScript] field not found:", position);
+    return "";
+  }
+  return input.value;
+}
+
+// pasteWhatsnew 接收语言名称数组（languages），因为菜单会重新渲染，
+// 不能保存 DOM 元素引用，必须每次按语言名称重新匹配。
+function pasteWhatsnew(index, languages, position, copyContents) {
+  const targetLanguage = languages[index];
+
+  // 切换语言：每次重新获取菜单项并按名称匹配
+  msEnsureLanguageMenuOpen();
+  for (let item of msGetLocaleItems()) {
+    if (msLangName(item) == targetLanguage) {
+      item.click();
+    }
+  }
+
+  // 粘贴文本（字段在语言切换后会重新渲染，所以在 setTimeout 内重新查询）
+  setTimeout(() => {
+    const field = document.querySelector('[name="' + position + '"]');
+    if (!field) {
+      console.warn("[MagicScript] field not found:", position);
+      return;
+    }
+    msSetFieldValue(field, copyContents[targetLanguage]);
+  }, 1000);
+
+  // 点击保存
+  setTimeout(() => {
+    const saveButton = msGetSaveButton();
+    if (!saveButton) {
+      console.warn("[MagicScript] save button not found");
+      return;
+    }
+    if (saveButton.disabled) {
+      console.warn(
+        "[MagicScript] save button is disabled — the paste may not have",
+        "registered as a change",
+      );
+    }
+    saveButton.click();
+  }, 2000);
+
+  // 迭代到下一种语言
+  setTimeout(() => {
+    if (index < languages.length - 1) {
+      pasteWhatsnew(index + 1, languages, position, copyContents);
+    }
+  }, 5000);
+}
 
 function getTextContent() {
   return new Promise((resolve, reject) => {
-      chrome.storage.local.get('textContent', function(result) {
-          if (chrome.runtime.lastError) {
-              reject(chrome.runtime.lastError);
-          } else {
-              resolve(result.textContent);
-          }
-      });
+    chrome.storage.local.get("textContent", function (result) {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(result.textContent);
+      }
+    });
   });
 }
 
 async function fetchTextContent() {
   try {
-      return await getTextContent();
+    return await getTextContent();
   } catch (error) {
-      console.error('Error retrieving value:', error);
-      return null
+    console.error("[MagicScript] error retrieving textContent:", error);
+    return null;
   }
 }
