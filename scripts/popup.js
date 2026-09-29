@@ -1,5 +1,9 @@
 // 为 execute 按钮添加事件监听器
 document.getElementById("execute").addEventListener("click", executeScript);
+document.getElementById("saveTexts").addEventListener("click", saveCurrentTexts);
+document.getElementById("editSaved").addEventListener("click", () => {
+    chrome.tabs.create({ url: `savedTextsEditor.html?type=${getSelectedType()}` });
+});
 // document.getElementById("history").addEventListener("click", openHistoryTab);
 // document.getElementById("saveMetaData").addEventListener("click", saveDataClick);
 
@@ -11,33 +15,76 @@ const copyOptionRadios = document.querySelectorAll('input[name="copyOption"]');
 // 获取 Text Group 容器
 const textGroup = document.getElementById('textGroup');
 
-// 为 copyOption 单选按钮添加 change 事件监听
+const savedGroup = document.getElementById('savedGroup');
+
+// 根据选中的操作显示 Text group 或 Saved text group
 copyOptionRadios.forEach(radio => {
     radio.addEventListener('change', () => {
-        // 检查是否选择了 "copy_primary_translation"
-        if (document.querySelector('input[name="copyOption"]:checked').value === 'copy_primary_translation') {
-            textGroup.style.display = 'block'; // 显示 Text group
-        } else {
-            textGroup.style.display = 'none'; // 隐藏 Text group
-        }
+        const operation = getSelectedOperation();
+        textGroup.style.display = operation === 'copy_primary_translation' ? 'block' : 'none';
+        savedGroup.style.display = operation === 'copy_saved' ? 'block' : 'none';
     });
 });
 
-// 显示执行提示框：这里改名为 showExecutionNotification，避免覆盖全局 alert，并修正注释与实现不一致的问题
-function showExecutionNotification(){
-    console.log("[MagicScript][popup] showExecutionNotification")
-    const notification = document.getElementById('notification');
-    if (!notification) {
-        // 说明：理论上 popup.html 一定有 notification 元素，这里加判断是为了开源后防御性更好
-        console.log("[MagicScript][popup] notification element not found");
-        return;
-    }
-    notification.style.display = 'block'; // 显示提示消息
-    // 实际展示时间是 10 秒，这里注释同步为 10 秒，避免误解
-    setTimeout(function() {
-        notification.style.display = 'none'; // 隐藏提示消息
-    }, 10000);
+// Saved text status follows the selected Position and any saved change.
+document.querySelectorAll('input[name="type"]').forEach(radio => {
+    radio.addEventListener('change', refreshSavedStatus);
+});
+chrome.storage.onChanged.addListener((changes) => {
+    if (changes.savedTexts) refreshSavedStatus();
+});
+refreshSavedStatus();
+
+function refreshSavedStatus() {
+    const position = getSelectedType();
+    chrome.storage.local.get('savedTexts', function (result) {
+        const saved = result.savedTexts && result.savedTexts[position];
+        document.getElementById('savedStatus').textContent = saved
+            ? `Saved text: ${Object.keys(saved.texts).length} languages, saved ${saved.date.slice(0, 10)}`
+            : 'No saved text';
+        // Editing requires a prior capture.
+        document.getElementById('editSaved').style.display = saved ? '' : 'none';
+    });
 }
+
+// Capture the selected field in every language of the displayed version.
+async function saveCurrentTexts() {
+    const currTab = await getTabId();
+    await chrome.storage.local.set({ selectedType: getSelectedType() });
+    chrome.scripting.executeScript({
+        target: { tabId: currTab.id },
+        files: ["scripts/shareFunctions.js", "scripts/saveTexts.js"]
+    });
+}
+
+// Execution progress modal: the injected scripts write `pasteProgress` (see
+// msReportProgress in shareFunctions.js). The modal blocks the popup while a
+// script runs; "Close" hides it and clears the stored progress, which is
+// also the way out if a run stops midway.
+const progressOverlay = document.getElementById('progressOverlay');
+const progressText = document.getElementById('progressText');
+const progressClose = document.getElementById('progressClose');
+
+function showProgress(text) {
+    progressText.textContent = text;
+    progressOverlay.hidden = false;
+    progressClose.focus();
+}
+
+progressClose.addEventListener('click', () => {
+    progressOverlay.hidden = true;
+    chrome.storage.local.set({ pasteProgress: '' });
+});
+chrome.storage.onChanged.addListener((changes) => {
+    // An empty value is a reset: it never hides the modal by itself.
+    if (changes.pasteProgress && changes.pasteProgress.newValue) {
+        showProgress(changes.pasteProgress.newValue);
+    }
+});
+// Reopening the popup during (or right after) a run shows its progress.
+chrome.storage.local.get('pasteProgress', (result) => {
+    if (result.pasteProgress) showProgress(result.pasteProgress);
+});
 
 // 获取当前选中的类型（whatsNew 或 promotionalText）
 function getSelectedType() {
@@ -56,7 +103,7 @@ function getSelectedOperation() {
 // 处理 execute 按钮点击，根据选中的类型和操作执行对应的功能
 async function executeScript() {
     // 说明：展示执行中的提示，引导用户等待页面自动修改
-    showExecutionNotification();
+    showProgress('Starting… Please wait until the content on the page begins to change.');
     let currTab = await getTabId();
     let selectedType = getSelectedType(); // 获取选中的类型
     let selectedOperation = getSelectedOperation(); // 获取选中的操作
@@ -66,9 +113,9 @@ async function executeScript() {
 
     console.log("selectedPlatform", selectedPlatform)
     // 设置全局变量
-    chrome.storage.local.set({ 'selectedPlatform': selectedPlatform }, function() {
-        console.log('Variable stored');
-    });
+    // pasteProgress is reset so the same final message still fires onChanged,
+    // and so a run that stops early (alert) leaves nothing stale behind.
+    await chrome.storage.local.set({ selectedPlatform: selectedPlatform, selectedType: selectedType, pasteProgress: '' });
 
     // 根据选中的操作和类型决定加载哪些脚本
     switch (selectedOperation) {
@@ -92,6 +139,9 @@ async function executeScript() {
                 });
             });
             return;
+        case "copy_saved":
+            scriptFiles.push("scripts/savedTexts.js");
+            break;
         default:
             console.log("No operation selected");
             return;

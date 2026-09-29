@@ -122,6 +122,11 @@ function msSetFieldValue(field, value) {
   field.blur();
 }
 
+// Report execution progress to the popup, which shows it in a modal.
+function msReportProgress(text) {
+  chrome.storage.local.set({ pasteProgress: text });
+}
+
 // pageCheck 负责在 App Store Connect 的分发页面上定位指定平台下的版本列表，
 // 并根据 directToInflight 参数决定是跳转到 inflight 还是 deliverable。
 function pageCheck(end, directToInflight = false) {
@@ -333,49 +338,63 @@ function copyInput(position) {
 
 // pasteWhatsnew 接收语言名称数组（languages），因为菜单会重新渲染，
 // 不能保存 DOM 元素引用，必须每次按语言名称重新匹配。
+// It does not click Save: App Store Connect keeps unsaved edits across
+// language switches, so the user saves every language at once at the end.
+// This also avoids locating the Save button, whose label depends on the
+// App Store Connect UI language (see MS_SAVE_LABELS).
+// Each step catches its own errors so one failing language never stops the
+// chain (which would leave the progress banner stuck on that language).
 function pasteWhatsnew(index, languages, position, copyContents) {
   const targetLanguage = languages[index];
+  const step = "(" + (index + 1) + "/" + languages.length + ")";
+  console.log("[MagicScript] pasting", targetLanguage, step);
+  msReportProgress("MagicScript: pasting " + targetLanguage + " " + step + "…");
 
   // 切换语言：每次重新获取菜单项并按名称匹配
-  msEnsureLanguageMenuOpen();
-  for (let item of msGetLocaleItems()) {
-    if (msLangName(item) == targetLanguage) {
-      item.click();
+  try {
+    msEnsureLanguageMenuOpen();
+    let switched = false;
+    for (let item of msGetLocaleItems()) {
+      if (msLangName(item) == targetLanguage) {
+        item.click();
+        switched = true;
+      }
     }
+    if (!switched) {
+      console.warn("[MagicScript] language not found in menu:", targetLanguage);
+    }
+  } catch (error) {
+    console.error("[MagicScript] could not switch to", targetLanguage, error);
   }
 
   // 粘贴文本（字段在语言切换后会重新渲染，所以在 setTimeout 内重新查询）
   setTimeout(() => {
-    const field = document.querySelector('[name="' + position + '"]');
-    if (!field) {
-      console.warn("[MagicScript] field not found:", position);
-      return;
+    try {
+      const field = document.querySelector('[name="' + position + '"]');
+      if (field) {
+        msSetFieldValue(field, copyContents[targetLanguage]);
+      } else {
+        console.warn("[MagicScript] field not found:", position);
+      }
+    } catch (error) {
+      console.error("[MagicScript] could not paste into", targetLanguage, error);
     }
-    msSetFieldValue(field, copyContents[targetLanguage]);
-  }, 1000);
 
-  // 点击保存
-  setTimeout(() => {
-    const saveButton = msGetSaveButton();
-    if (!saveButton) {
-      console.warn("[MagicScript] save button not found");
-      return;
-    }
-    if (saveButton.disabled) {
-      console.warn(
-        "[MagicScript] save button is disabled — the paste may not have",
-        "registered as a change",
+    // 迭代到下一种语言，最后提示用户手动保存
+    if (index < languages.length - 1) {
+      setTimeout(() => {
+        pasteWhatsnew(index + 1, languages, position, copyContents);
+      }, 1000);
+    } else {
+      // No alert: it would close the popup, whose modal shows this message.
+      console.log("[MagicScript] paste finished");
+      msReportProgress(
+        "Done: text pasted into " +
+          languages.length +
+          " languages. Review it, then click Save in App Store Connect.",
       );
     }
-    saveButton.click();
-  }, 2000);
-
-  // 迭代到下一种语言
-  setTimeout(() => {
-    if (index < languages.length - 1) {
-      pasteWhatsnew(index + 1, languages, position, copyContents);
-    }
-  }, 5000);
+  }, 1000);
 }
 
 function getTextContent() {

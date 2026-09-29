@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saved texts</title>
+    <style>
+        body {
+            background-color: #181123;
+            color: white;
+            font-family: sans-serif;
+            max-width: 50em;
+            margin: 0 auto;
+            padding: 2em 16px;
+        }
+        #toggleGroup label {
+            margin-right: 1em;
+            cursor: pointer;
+        }
+        .language {
+            margin-top: 1.5em;
+        }
+        .language label {
+            display: block;
+            margin-bottom: 0.4em;
+            font-weight: bold;
+        }
+        textarea {
+            width: 100%;
+            min-height: 6em;
+            padding: 0.6em;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font: inherit;
+        }
+        button {
+            border: none;
+            cursor: pointer;
+            padding: 0.8em 2em;
+            border-radius: 8px;
+            margin-top: 1.5em;
+        }
+        #message {
+            margin-top: 1em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Saved texts</h1>
+    <div id="toggleGroup">
+        <label><input type="radio" name="type" value="whatsNew" checked> What's New</label>
+        <label><input type="radio" name="type" value="promotionalText"> Promotional Text</label>
+    </div>
+    <div id="languages"></div>
+    <button id="save">Save</button>
+    <div id="message"></div>
+    <script src="scripts/savedTextsEditor.js"></script>
+</body>
+</html>

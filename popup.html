@@ -106,18 +106,33 @@
         .radio-group input[type="radio"] {
             margin-right: 0.5em;
         }
-        #notification {
-            display: none; /* 初始状态为隐藏 */
-            background-color: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 1em;
-            border-radius: 8px;
+        /* Execution progress modal: covers the popup so nothing can be
+           clicked while a script runs. Updated by the injected scripts. */
+        #progressOverlay {
             position: fixed;
-            top: 61%;
-            left: 50%;
-            text-align: center; /* Center text horizontally */
-            transform: translate(-50%, -50%);
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: rgba(0, 0, 0, 0.7);
             z-index: 1000;
+        }
+        #progressOverlay[hidden] {
+            display: none;
+        }
+        #progressBox {
+            width: 80%;
+            padding: 1.5em;
+            border-radius: 8px;
+            background-color: #181123;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+            color: white;
+            text-align: center;
+        }
+        #progressClose {
+            width: auto;
+            margin: 1em 0 0;
+            padding: 0.6em 2em;
         }
         #inputText {
             padding: 4%;
@@ -133,12 +148,24 @@
         #textGroup {
             display: none; /* 默认隐藏 */
         }
+        #savedGroup {
+            display: none; /* shown when copy_saved is selected */
+        }
+        #savedStatus {
+            color: white;
+            margin-bottom: 0.5em;
+        }
     </style>
 </head>
 <body>
     <div id="content">
         <h1 class="gradient-text">MagicScript</h1>
-        <div id="notification">The script starts executing.<br>Please wait until the content on the page begins to change.</div> <!-- 提示消息容器 -->
+        <div id="progressOverlay" hidden>
+            <div id="progressBox" role="dialog" aria-modal="true" aria-labelledby="progressText">
+                <div id="progressText" role="status"></div>
+                <button id="progressClose">Close</button>
+            </div>
+        </div>
 
         <div class="groupName">Platform</div>
         <div id="toggleGroup">
@@ -188,6 +215,16 @@
                 <input type="radio" name="copyOption" value="copy_primary_translation">
                 from one language to all other languages with translation
             </label>
+            <label>
+                <input type="radio" name="copyOption" value="copy_saved">
+                from the saved text to the latest version
+            </label>
+        </div>
+
+        <div id="savedGroup">
+            <div id="savedStatus"></div>
+            <button id="saveTexts">Save current texts</button>
+            <button id="editSaved">Edit saved texts</button>
         </div>
 
         <div class="groupName" id="textGroup">

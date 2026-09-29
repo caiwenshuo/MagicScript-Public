@@ -5,3 +5,6 @@ scripts/config.js
 .claude/
 .DS_Store
 
+
+# Documents de travail générés par Claude (specs / plans superpowers)
+docs/superpowers/
